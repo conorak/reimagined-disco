@@ -1,0 +1,32 @@
+#Square lattice
+import random as rand
+import numpy as np
+import scipy as sp
+
+sizes = [32, 200, 300, 500]
+
+for x in range(len(sizes)):
+    n=sizes[x]
+    L=n
+    N = L*L
+
+    adj = np.zeros((2*N,2))
+    for i in range(N):
+        adj[2*i][0] = i #to the right
+        adj[2*i+1][0] = i #below
+
+        #right bonds
+        if (2*i-1)%L == 0 and i != 0:
+            adj[2*i][1] = i-L+1
+        else:
+            adj[2*i][1] = i+1
+
+        #down bonds
+        if 2*i == 2*N-1:
+            adj[2*i+1][1] = 0
+        elif i+L > N-1:
+            adj[2*i+1][1] = i-N+L
+        else:
+            adj[2*i+1][1] = i+L
+    label = 'square'+str(sizes[x])+'.dat'
+    adj.dump(label)
