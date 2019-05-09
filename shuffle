@@ -1,0 +1,283 @@
+import os
+import random as rd
+import numpy as np
+import matplotlib.pyplot as plt
+import math
+import time
+start = time.time()
+rd.seed(121)
+
+square = 1
+triangle = 0
+honey = 0
+
+single=0 #set to 1 to look at just one lattice size
+
+if single==0:
+    sizes = [32, 200, 300, 500]
+else:
+    sizes = [32]
+
+for w in range(4):
+    label = 'square'+str(sizes[w])+'.dat'
+    #imports the bond list or creates one if it doesn't exist
+    if square==1:
+        if os.path.isfile('./'+label)==False:
+            import sq_latt
+        adj = np.load(label)
+    elif triangle==1:
+        if os.path.isfile('./triangle.dat')==False:
+            import tri_exp
+        adj = np.load('triangle.dat')
+    elif honey==1:
+        if os.path.isfile('./honey.dat')==False:
+            import honey_exp
+        adj = np.load('honey.dat')
+
+    #determine number of nodes
+    M = len(adj) #number of bonds listed
+    if square==1:
+        N = M/2 #number of nodes
+        B = 2*M #absolute number of bonds
+        n = int(math.sqrt(N))
+    elif triangle==1:
+        N=M/3
+    elif honey==1:
+        N = (M*2)/3
+    N=int(N)
+
+    #=================
+    #===Convolution===
+    #=================
+    convstart = time.time()
+    pre_array = np.zeros([M,1])
+    pre_array[0][0] = 0 #start at all active
+    pre_array[1][0] = math.log(float(M)) #then one inactive
+    for aa in range(2,M):
+        pre = np.float64(math.log(M-aa+1) - math.log(aa))
+        binom = pre_array[aa-1][0]
+        pre_array[aa][0] = pre+np.float64(binom)
+    convend = time.time()
+
+    #=========================
+    #==Root-finding function==
+    #=========================
+    def root(s):
+        s = int(s)
+        if int(sites[s])<0: #do nothing if root
+            return s
+        else: #otherwise go to root and come back
+            sites[s] = root(sites[s])
+            return sites[s]
+
+    #====================
+    #=Plotting function==
+    #====================
+    def makeGrid(B):
+        x = np.zeros([len(B)])
+        y = np.zeros([len(B)])
+        points = []
+        for i in range(len(B)):
+            point = np.array([B[i]%n, B[i]//n])
+            points.append(point) 
+        return points
+
+    #===============
+    #==Bookkeeping==
+    pArray = np.empty([]) #activation probability
+    clusterPic=[] #screenshots
+    snapRate = N/4
+    #--------"measure" key--------
+    # Row 0: giant component
+    # Row 1: average cluster size
+    # Row 2: susceptibility
+    measure = np.zeros([3,M])
+    #-----------------------------
+    avg_S = N
+    measure[1][0] = 1
+    PQ = np.zeros([M-1,1])
+    PQ2 = np.zeros([M-1,1])
+    SQ = np.zeros([M-1,1])
+    chiQ = np.zeros([M-1,1])
+
+    #==============================================
+
+    #initialize sites array to have each node as root
+    sites = np.zeros((N,1))
+    for i in range(N):
+        sites[i] = -1
+
+    #===============
+    #==Percolation==
+    #===============
+    for i in range(M-1):
+        #------------------------------
+        #--Swap rows and assign nodes--
+        #------------------------------
+        r = rd.randint(i+1,M-1)
+        adj[[i,r]] = adj[[r,i]]
+        rt1 = root(adj[i][0]-1)
+        rt2 = root(adj[i][1]-1)
+        rt1 = int(rt1)
+        rt2 = int(rt2)
+        if rt1 != rt2:
+            #update <S> step one
+            avg_S = avg_S - ((sites[rt1])**2)
+            avg_S = avg_S - ((sites[rt2])**2)
+            if sites[rt1] < sites[rt2]:
+                sites[rt1] = sites[rt1] - abs(sites[rt2])
+                sites[rt2] = rt1
+                avg_S = avg_S+((sites[rt1])**2)
+            else:
+                sites[rt2] = sites[rt2] - abs(sites[rt1])
+                sites[rt1] = rt2
+                avg_S = avg_S+((sites[rt2])**2)
+        #---------------
+        #--Calculate p--
+        #---------------
+        active_B = int(M-i)
+        p = active_B/float(M)
+        pArray = np.append(pArray,p) #saves probability after each activation
+        #----------------
+        #--Measurements--
+        #----------------
+        bigrt = np.argmin(sites) #root of largest cluster
+
+        #--Next lines are if there are two clusters of equal size--
+        if isinstance(bigrt,np.int64)==False:
+            bigrt = bigrt[0]
+
+        if i%snapRate==0:
+        #--Add elements to cluster--
+            cluster = bigrt-1		
+            for j in range(N):
+                if root(j)==bigrt:
+                    cluster=np.append(cluster,j)
+
+        #--Calculate and save p_giant, <S>, chi--
+        p_giant = abs(sites[bigrt])/N
+        measure[0][i] = p_giant
+
+        numer = avg_S - ((N*p_giant)**2)
+        denom = N*(1-p_giant)
+        if denom!=0:
+            weight = float(numer)/float(denom)
+        else:
+            weight = 0
+        measure[1][i] = weight
+
+        chi = weight*N*(1-p_giant)
+        measure[2][i] = chi
+
+        #--Calculate Q--
+        numbonds = int(M - i)
+        n_fl = float(M-i)
+        if i!=0 and p!=1:
+            #common prefactors	
+            one = n_fl*math.log(p)
+            two = ((M-n_fl)*math.log((1-p)))
+            B_coeff = one+two+pre_array[numbonds]
+
+            #giant comp as function of p
+            Qn = math.log(p_giant)
+            PQ[i][0] = PQ[i-1][0] + math.exp(B_coeff*Qn)
+
+            #giant comp squared as function of p
+            Qn = math.log(p_giant**2)
+            PQ2[i][0] = PQ2[i-1][0]+math.exp(B_coeff*Qn)
+
+            #weighted avg cluster size as function of p
+            if weight!=0:
+                Qn = math.log(weight)
+                SQ[i][0] = SQ[i-1][0]+math.exp(B_coeff*Qn)
+
+            #chi as a function of p
+                if chi>=1:
+                    Qn = math.log(chi)
+                    chiQ[i][0] = chiQ[i-1][0]+math.exp(B_coeff*Qn)
+        #--Take picture--
+        if i%snapRate==0:
+            clusterPic.append(cluster)
+
+    end = time.time()
+    print('Percolation time')
+    print(end-start)
+
+    if single==1: #only show plots if single lattice size
+        figsnap = plt.figure(1)
+        for i in range(6):
+            plt.subplot(2,3,i+1)
+            plt.axis([-0.5,n-0.5,-0.5,n-0.5])
+            subgraph = clusterPic[i]
+            plotPoints = makeGrid(subgraph)
+            plt.scatter(*zip(*plotPoints))
+            plt.tight_layout()
+            cur_axes = plt.gca()
+            cur_axes.axes.get_xaxis().set_ticklabels([])
+            cur_axes.axes.get_yaxis().set_ticklabels([])
+
+        test=1
+        if test==1:
+
+            fig = plt.figure(2)
+
+            upto = np.nonzero(measure[0][:])
+            upto = len(upto[0])
+            ax2 = fig.add_subplot(131)
+            ax2.plot(measure[0][0:upto])
+            ax2.set_xlim([0,upto])
+            ax2.set_title('Giant Component')
+
+            ax3 = fig.add_subplot(132)
+            ax3.plot(measure[1][0:upto])
+            ax3.set_xlim([0,2050])
+            ax3.set_title('Weighted Average Cluster Size')
+
+            ax4 = fig.add_subplot(133)
+            ax4.plot(measure[2][0:upto])
+            ax4.set_xlim([0,2050])
+            ax4.set_title('Chi')
+
+        plt.show()
+
+#     if w==1:
+#         #Plot giant comp
+#         fig = plt.figure(1)
+#         fig.suptitle('Giant Component as a function of p for 2 lattices')
+#         ax1 = fig.add_subplot(121)
+#         #print(len(pArray),len(PQ))
+#         ax1.plot(pArray,PQ)
+#         ax1.set_title(str(sizes[1])+' nodes')
+
+#     if w==3:
+#         ax2 = fig.add_subplot(122)
+#         ax2.plot(pArray,PQ)
+#         ax2.set_title(str(sizes[3])+' nodes')
+
+#     if w==1:
+#         #plot avg cluster size
+#         fig1 = plt.figure(2)
+#         fig1.suptitle('Average cluster size as a function of p for 2 lattices')
+#         ax3 = fig1.add_subplot(121)
+#         ax3.plot(pArray,SQ)
+#         ax3.set_title(str(sizes[1])+' nodes')
+
+#     if w==3:
+#         ax4 = fig1.add_subplot(122)
+#         ax4.plot(pArray,SQ)
+#         ax4.set_title(str(sizes[3])+' nodes')
+
+#     if w==1:
+#         #plot chi
+#         fig2 = plt.figure(3)
+#         fig2.suptitle('Chi as a function of p for 2 lattices')
+#         ax5 = fig2.add_subplot(121)
+#         ax5.plot(pArray,chiQ)
+#         ax5.set_title(str(sizes[1])+' nodes')
+
+#     if w==3: 
+#         ax6 = fig2.add_subplot(122)
+#         ax6.plot(pArray,chiQ)
+#         ax6.set_title(str(sizes[3])+ ' nodes')
+
+plt.show()
